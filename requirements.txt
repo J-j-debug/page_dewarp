@@ -1,4 +1,5 @@
 numpy
 scipy
 Pillow
-cv2>=3.0
+opencv-python # Corrected from cv2>=3.0
+streamlit

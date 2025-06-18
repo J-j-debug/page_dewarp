@@ -865,6 +865,93 @@ def remap_image(name, img, small, page_dims, params):
     return threshfile
 
 
+
+def run_dewarp_process(image_paths, params_dict):
+    '''
+    Processes a list of images using provided parameters.
+    image_paths: A list of paths to images.
+    params_dict: A dictionary of parameters, similar to what argparse would produce.
+    Returns a list of output file paths.
+    '''
+    global args, K # Need to set the global args and K for the script's functions
+
+    # Create a Namespace object from params_dict to simulate argparse args
+    # Need to import argparse if not already available globally in this context
+    # For simplicity, assume 'argparse' is imported in the original file.
+    # We need the ArgumentParser instance to set defaults for missing params.
+    # This is tricky. A better way is to ensure params_dict has ALL required values with defaults.
+    # temp_parser = argparse.ArgumentParser() # Temporary parser to get defaults
+    args = argparse.Namespace(**params_dict)
+
+    # Update K matrix (copied from original main() setup)
+    K = np.array([
+        [args.focal_length, 0, 0],
+        [0, args.focal_length, 0],
+        [0, 0, 1]], dtype=np.float32)
+
+    if args.debug_level > 0 and args.debug_output != 'file':
+        if not cv2.getWindowProperty(WINDOW_NAME, cv2.WND_PROP_VISIBLE):
+             cv2.namedWindow(WINDOW_NAME)
+
+    outfiles = []
+    # The core processing loop, adapted from main()
+    for imgfile_path in image_paths:
+        img = cv2.imread(imgfile_path)
+        if img is None:
+            print(f"Warning: Could not read image {imgfile_path}. Skipping.")
+            continue
+        small = resize_to_screen(img) # resize_to_screen needs to be available
+        basename = os.path.basename(imgfile_path)
+        name, ext = os.path.splitext(basename)
+
+        print(f"loaded {basename} with size {imgsize(img)}") # imgsize needs to be available
+        print(f"and resized to {imgsize(small)}")
+
+        if args.debug_level >= 3:
+            debug_show(name, 0.0, 'original', small) # debug_show needs to be available
+
+        pagemask, page_outline = get_page_extents(small) # get_page_extents needs to be available
+
+        cinfo_list = get_contours(name, small, pagemask, 'text') # get_contours needs to be available
+        spans = assemble_spans(name, small, pagemask, cinfo_list) # assemble_spans needs to be available
+
+        if len(spans) < 3:
+            print(f"  detecting lines because only {len(spans)} text spans")
+            cinfo_list = get_contours(name, small, pagemask, 'line')
+            spans2 = assemble_spans(name, small, pagemask, cinfo_list)
+            if len(spans2) > len(spans):
+                spans = spans2
+
+        if not spans:
+            print(f"skipping {name} because only {len(spans)} spans")
+            continue
+
+        span_points = sample_spans(small.shape, spans) # sample_spans needs to be available
+
+        print(f"  got {len(spans)} spans with {sum([len(pts) for pts in span_points])} points.")
+
+        corners, ycoords, xcoords = keypoints_from_samples(name, small, pagemask, page_outline, span_points) # keypoints_from_samples needs to be available
+
+        rough_dims, span_counts, current_params = get_default_params(corners, ycoords, xcoords) # get_default_params needs to be available
+
+        dstpoints = np.vstack((corners[0].reshape((1, 1, 2)),) + tuple(span_points))
+
+        optimized_params = optimize_params(name, small, dstpoints, span_counts, current_params) # optimize_params needs to be available
+
+        page_dims = get_page_dims(corners, rough_dims, optimized_params) # get_page_dims needs to be available
+
+        # output_dir must be handled by remap_image or by prefixing 'name'
+        # For now, assume remap_image saves to current dir, or one specified by its 'name' prefix.
+        # The 'name' in remap_image is used for the output file. We might need to prefix it.
+        # Let's assume the output from remap_image is basename_thresh.png in the current directory
+        outfile_leaf = remap_image(name, img, small, page_dims, optimized_params) # remap_image needs to be available
+
+        outfiles.append(outfile_leaf) # Collect leaf names
+        print(f"  wrote {outfile_leaf}")
+        print()
+
+    return outfiles
+
 def main():
     global args, K # Declare K as global to modify it
     args = parser.parse_args()
